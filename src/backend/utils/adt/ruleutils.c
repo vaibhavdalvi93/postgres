@@ -35,6 +35,7 @@
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_statistic_ext.h"
+#include "catalog/pg_subscription.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -13714,4 +13715,160 @@ get_range_partbound_string(List *bound_datums)
 	appendStringInfoChar(buf, ')');
 
 	return buf->data;
+}
+
+/*
+ * pg_get_subscription_ddl
+ *		Get CREATE SUBSCRIPTION statement for the given subscription
+ */
+Datum
+pg_get_subscription_ddl(PG_FUNCTION_ARGS)
+{
+	StringInfo	pubnames = makeStringInfo();
+	StringInfoData buf;
+	HeapTuple	tup;
+	char	   *subname;
+	char	   *conninfo;
+	List	   *publist;
+	Datum		datum;
+	bool		isnull;
+
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+	subname = text_to_cstring(PG_GETARG_TEXT_P(0));
+
+	/* Look up the subscription in pg_subscription */
+	tup = SearchSysCache2(SUBSCRIPTIONNAME, ObjectIdGetDatum(MyDatabaseId),
+						  CStringGetDatum(subname));
+	if (!HeapTupleIsValid(tup))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("subscription \"%s\" does not exist", subname)));
+
+	initStringInfo(&buf);
+
+	/* Build the CREATE SUBSCRIPTION statement */
+	appendStringInfo(&buf, "CREATE SUBSCRIPTION %s ",
+					 quote_identifier(subname));
+
+	/* Get conninfo */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subconninfo);
+	conninfo = TextDatumGetCString(datum);
+
+	/* Append connection info to the CREATE SUBSCRIPTION statement */
+	appendStringInfo(&buf, "CONNECTION \'%s\'", conninfo);
+
+	/* Build list of quoted publications and append them to query */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subpublications);
+	publist = textarray_to_stringlist(DatumGetArrayTypeP(datum));
+	GetPublicationsStr(publist, pubnames, false);
+	appendStringInfo(&buf, " PUBLICATION %s", pubnames->data);
+
+	/*
+	 * Add options using WITH clause.  The 'connect' option value given at the
+	 * time of subscription creation is not available in the catalog.  When
+	 * creating a subscription, the remote host is not reachable or in an
+	 * unclear state, in that case, the subscription can be created using
+	 * 'connect = false' option.  This is what pg_dump uses.
+	 *
+	 * The status or value of the options 'create_slot' and 'copy_data' not
+	 * available in the catalog table.  We can use default values i.e. TRUE
+	 * for both.  This is what pg_dump uses.
+	 */
+	appendStringInfo(&buf, " WITH (connect = false");
+
+	/* Get slotname */
+	datum = SysCacheGetAttr(SUBSCRIPTIONOID, tup,
+							Anum_pg_subscription_subslotname,
+							&isnull);
+	if (!isnull)
+	{
+		char	   *slotname = pstrdup(NameStr(*DatumGetName(datum)));
+
+		appendStringInfo(&buf, ", slot_name = \'%s\'", slotname);
+	}
+	else
+	{
+		appendStringInfo(&buf, ", slot_name = none");
+		/* Setting slot_name to none must set create_slot to false */
+		appendStringInfo(&buf, ", create_slot = false");
+	}
+
+	/* Get enabled option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subenabled);
+	/* Setting 'slot_name' to none must set 'enabled' to false as well */
+	if (!DatumGetBool(datum) || isnull)
+		appendStringInfo(&buf, ", enabled = false");
+
+	/* Get binary option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subbinary);
+	if (DatumGetBool(datum))
+		appendStringInfo(&buf, ", binary = true");
+
+	/* Get streaming option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_substream);
+	if (DatumGetChar(datum) == LOGICALREP_STREAM_OFF)
+		appendStringInfo(&buf, ", streaming = off");
+	else if (DatumGetChar(datum) == LOGICALREP_STREAM_ON)
+		appendStringInfo(&buf, ", streaming = on");
+
+	/* Get sync commit option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subsynccommit);
+	if (strcmp(TextDatumGetCString(datum), "on") == 0)
+		appendStringInfo(&buf, ", synchronous_commit = on");
+	else if (strcmp(TextDatumGetCString(datum), "local") == 0)
+		appendStringInfo(&buf, ", synchronous_commit = local");
+	else if (strcmp(TextDatumGetCString(datum), "remote_write") == 0)
+		appendStringInfo(&buf, ", synchronous_commit = remote_write");
+	else if (strcmp(TextDatumGetCString(datum), "remote_apply") == 0)
+		appendStringInfo(&buf, ", synchronous_commit = remote_apply");
+
+	/* Get two-phase commit option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subtwophasestate);
+	if (DatumGetChar(datum) != LOGICALREP_TWOPHASE_STATE_DISABLED)
+		appendStringInfo(&buf, ", two_phase = on");
+
+	/* Disable on error? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subdisableonerr);
+	if (DatumGetBool(datum))
+		appendStringInfo(&buf, ", disable_on_error = on");
+
+	/* Password required? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subpasswordrequired);
+	if (!DatumGetBool(datum))
+		appendStringInfo(&buf, ", password_required = off");
+
+	/* Run as owner? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subrunasowner);
+	if (DatumGetBool(datum))
+		appendStringInfo(&buf, ", run_as_owner = on");
+
+	/* Get origin */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_suborigin);
+	if (pg_strcasecmp(TextDatumGetCString(datum), LOGICALREP_ORIGIN_ANY) != 0)
+		appendStringInfo(&buf, ", origin = none");
+
+	/* Failover? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subfailover);
+	if (DatumGetBool(datum))
+		appendStringInfo(&buf, ", failover = on");
+
+	/* Finally close parenthesis and add semicolon to the statement */
+	appendStringInfo(&buf, ");");
+
+	ReleaseSysCache(tup);
+
+	PG_RETURN_TEXT_P(string_to_text(buf.data));
 }

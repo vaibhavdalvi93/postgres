@@ -22,6 +22,7 @@
 #include "catalog/pg_subscription_d.h"	/* IWYU pragma: export */
 #include "lib/stringinfo.h"
 #include "nodes/pg_list.h"
+#include "utils/array.h"
 
 /* ----------------
  *		pg_subscription definition. cpp turns this into
@@ -207,5 +208,6 @@ extern int	CountDBSubscriptions(Oid dbid);
 
 extern void GetPublicationsStr(List *publications, StringInfo dest,
 							   bool quote_literal);
+extern List *textarray_to_stringlist(ArrayType *textarray);
 
 #endif							/* PG_SUBSCRIPTION_H */

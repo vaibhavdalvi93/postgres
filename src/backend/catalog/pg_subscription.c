@@ -32,8 +32,6 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
-static List *textarray_to_stringlist(ArrayType *textarray);
-
 /*
  * Add a comma-separated list of publication names to the 'dest' string.
  */
@@ -240,7 +238,7 @@ DisableSubscription(Oid subid)
  *
  * Note: the resulting list of strings is pallocated here.
  */
-static List *
+List *
 textarray_to_stringlist(ArrayType *textarray)
 {
 	Datum	   *elems;
