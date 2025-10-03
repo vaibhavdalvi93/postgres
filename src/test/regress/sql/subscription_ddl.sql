@@ -21,7 +21,8 @@ CREATE SUBSCRIPTION testsub3 CONNECTION 'host=unknown user=dvd password=pass12'
   PUBLICATION testpub4 WITH (connect=false, slot_name=none, enabled=false,
   create_slot=false, copy_data=false, binary=true, streaming=off,
   synchronous_commit=local, two_phase=true, disable_on_error=true,
-  password_required=false, run_as_owner=true, origin=none, failover=true);
+  password_required=false, run_as_owner=true, origin=none, failover=true,
+  retain_dead_tuples=true, max_retention_duration=100);
 SELECT pg_get_subscription_ddl('testsub3');
 
 -- Non-superuser can't see subscription ddl

@@ -13731,6 +13731,7 @@ pg_get_subscription_ddl(PG_FUNCTION_ARGS)
 	char	   *conninfo;
 	List	   *publist;
 	Datum		datum;
+	int			maxret;
 	bool		isnull;
 
 	if (PG_ARGISNULL(0))
@@ -13777,7 +13778,7 @@ pg_get_subscription_ddl(PG_FUNCTION_ARGS)
 	 * available in the catalog table.  We can use default values i.e. TRUE
 	 * for both.  This is what pg_dump uses.
 	 */
-	appendStringInfo(&buf, " WITH (connect = false");
+	appendStringInfoString(&buf, " WITH (connect = false");
 
 	/* Get slotname */
 	datum = SysCacheGetAttr(SUBSCRIPTIONOID, tup,
@@ -13791,9 +13792,9 @@ pg_get_subscription_ddl(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		appendStringInfo(&buf, ", slot_name = none");
+		appendStringInfoString(&buf, ", slot_name = none");
 		/* Setting slot_name to none must set create_slot to false */
-		appendStringInfo(&buf, ", create_slot = false");
+		appendStringInfoString(&buf, ", create_slot = false");
 	}
 
 	/* Get enabled option */
@@ -13801,72 +13802,85 @@ pg_get_subscription_ddl(PG_FUNCTION_ARGS)
 								   Anum_pg_subscription_subenabled);
 	/* Setting 'slot_name' to none must set 'enabled' to false as well */
 	if (!DatumGetBool(datum) || isnull)
-		appendStringInfo(&buf, ", enabled = false");
+		appendStringInfoString(&buf, ", enabled = false");
 
 	/* Get binary option */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_subbinary);
 	if (DatumGetBool(datum))
-		appendStringInfo(&buf, ", binary = true");
+		appendStringInfoString(&buf, ", binary = true");
 
 	/* Get streaming option */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_substream);
 	if (DatumGetChar(datum) == LOGICALREP_STREAM_OFF)
-		appendStringInfo(&buf, ", streaming = off");
+		appendStringInfoString(&buf, ", streaming = off");
 	else if (DatumGetChar(datum) == LOGICALREP_STREAM_ON)
-		appendStringInfo(&buf, ", streaming = on");
+		appendStringInfoString(&buf, ", streaming = on");
 
 	/* Get sync commit option */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_subsynccommit);
 	if (strcmp(TextDatumGetCString(datum), "on") == 0)
-		appendStringInfo(&buf, ", synchronous_commit = on");
+		appendStringInfoString(&buf, ", synchronous_commit = on");
 	else if (strcmp(TextDatumGetCString(datum), "local") == 0)
-		appendStringInfo(&buf, ", synchronous_commit = local");
+		appendStringInfoString(&buf, ", synchronous_commit = local");
 	else if (strcmp(TextDatumGetCString(datum), "remote_write") == 0)
-		appendStringInfo(&buf, ", synchronous_commit = remote_write");
+		appendStringInfoString(&buf, ", synchronous_commit = remote_write");
 	else if (strcmp(TextDatumGetCString(datum), "remote_apply") == 0)
-		appendStringInfo(&buf, ", synchronous_commit = remote_apply");
+		appendStringInfoString(&buf, ", synchronous_commit = remote_apply");
 
 	/* Get two-phase commit option */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_subtwophasestate);
 	if (DatumGetChar(datum) != LOGICALREP_TWOPHASE_STATE_DISABLED)
-		appendStringInfo(&buf, ", two_phase = on");
+		appendStringInfoString(&buf, ", two_phase = on");
 
 	/* Disable on error? */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_subdisableonerr);
 	if (DatumGetBool(datum))
-		appendStringInfo(&buf, ", disable_on_error = on");
+		appendStringInfoString(&buf, ", disable_on_error = on");
 
 	/* Password required? */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_subpasswordrequired);
 	if (!DatumGetBool(datum))
-		appendStringInfo(&buf, ", password_required = off");
+		appendStringInfoString(&buf, ", password_required = off");
 
 	/* Run as owner? */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_subrunasowner);
 	if (DatumGetBool(datum))
-		appendStringInfo(&buf, ", run_as_owner = on");
+		appendStringInfoString(&buf, ", run_as_owner = on");
 
 	/* Get origin */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_suborigin);
 	if (pg_strcasecmp(TextDatumGetCString(datum), LOGICALREP_ORIGIN_ANY) != 0)
-		appendStringInfo(&buf, ", origin = none");
+		appendStringInfoString(&buf, ", origin = none");
 
 	/* Failover? */
 	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
 								   Anum_pg_subscription_subfailover);
 	if (DatumGetBool(datum))
-		appendStringInfo(&buf, ", failover = on");
+		appendStringInfoString(&buf, ", failover = on");
+
+	/* Retain dead tuples? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subretaindeadtuples);
+	if (DatumGetBool(datum))
+		appendStringInfoString(&buf, ", retain_dead_tuples = on");
+
+	/* Max retention duration */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_submaxretention);
+	maxret = Int32GetDatum(datum);
+	if (maxret)
+		appendStringInfo(&buf, ", max_retention_duration = %d", maxret);
 
 	/* Finally close parenthesis and add semicolon to the statement */
-	appendStringInfo(&buf, ");");
+	appendStringInfoString(&buf, ");");
 
 	ReleaseSysCache(tup);
 
