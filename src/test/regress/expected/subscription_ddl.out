@@ -1,7 +1,8 @@
 --
 -- Get CREATE SUBSCRIPTION statement
 --
-CREATE ROLE sub_nonsup_user LOGIN;
+CREATE ROLE createsub_role LOGIN;
+CREATE ROLE readalldata_role LOGIN;
 -- Create subscription with minimal options
 CREATE SUBSCRIPTION testsub1 CONNECTION 'dbname=db_doesnotexist'
   PUBLICATION testpub1 WITH (connect=false);
@@ -9,9 +10,9 @@ WARNING:  subscription was created, but is not connected
 HINT:  To initiate replication, you must manually create the replication slot, enable the subscription, and refresh the subscription.
 -- Check that the subscription ddl is correctly created
 SELECT pg_get_subscription_ddl('testsub1');
-                                                                 pg_get_subscription_ddl                                                                  
-----------------------------------------------------------------------------------------------------------------------------------------------------------
- CREATE SUBSCRIPTION testsub1 CONNECTION 'dbname=db_doesnotexist' PUBLICATION "testpub1" WITH (connect = false, slot_name = 'testsub1', enabled = false);
+                                                                                                                                                                                      pg_get_subscription_ddl                                                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE SUBSCRIPTION testsub1 CONNECTION 'dbname=db_doesnotexist' PUBLICATION "testpub1" WITH (connect = false, slot_name = 'testsub1', enabled = false, binary = false, streaming = parallel, synchronous_commit = off, two_phase = off, disable_on_error = off, password_required = on, run_as_owner = off, origin = any, failover = off, retain_dead_tuples = off, max_retention_duration = 0);
 (1 row)
 
 -- Create subscription with more options
@@ -21,9 +22,9 @@ CREATE SUBSCRIPTION "TestSubddL2" CONNECTION 'host=unknown user=dvd password=pas
 WARNING:  subscription was created, but is not connected
 HINT:  To initiate replication, you must manually create the replication slot, enable the subscription, and refresh the subscription.
 SELECT pg_get_subscription_ddl('TestSubddL2');
-                                                                                pg_get_subscription_ddl                                                                                 
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- CREATE SUBSCRIPTION "TestSubddL2" CONNECTION 'host=unknown user=dvd password=pass123' PUBLICATION "testpub2", "TestPub3" WITH (connect = false, slot_name = 'slot1', enabled = false);
+                                                                                                                                                                                                     pg_get_subscription_ddl                                                                                                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE SUBSCRIPTION "TestSubddL2" CONNECTION 'host=unknown user=dvd password=pass123' PUBLICATION "testpub2", "TestPub3" WITH (connect = false, slot_name = 'slot1', enabled = false, binary = false, streaming = parallel, synchronous_commit = off, two_phase = off, disable_on_error = off, password_required = on, run_as_owner = off, origin = any, failover = off, retain_dead_tuples = off, max_retention_duration = 0);
 (1 row)
 
 -- Create subscription with all options
@@ -45,25 +46,43 @@ SELECT pg_get_subscription_ddl('testsub3');
  CREATE SUBSCRIPTION testsub3 CONNECTION 'host=unknown user=dvd password=pass12' PUBLICATION "testpub4" WITH (connect = false, slot_name = none, create_slot = false, enabled = false, binary = true, streaming = off, synchronous_commit = local, two_phase = on, disable_on_error = on, password_required = off, run_as_owner = on, origin = none, failover = on, retain_dead_tuples = on, max_retention_duration = 100);
 (1 row)
 
--- Non-superuser can't see subscription ddl
-SET SESSION AUTHORIZATION 'sub_nonsup_user';
+-- Non-superusers and which don't have pg_create_subscription and/or
+-- pg_read_all_data permission can't get ddl
+SET SESSION AUTHORIZATION 'createsub_role';
 SELECT pg_get_subscription_ddl('TestSubddL2');
-ERROR:  permission denied for function pg_get_subscription_ddl
+ERROR:  permission denied to get the create subscription ddl
+DETAIL:  Only roles with privileges of the "pg_create_subscription" and/or "pg_read_all_data" role may get ddl.
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION 'createsub_role';
+SELECT pg_get_subscription_ddl('TestSubddL2');
+ERROR:  permission denied to get the create subscription ddl
+DETAIL:  Only roles with privileges of the "pg_create_subscription" and/or "pg_read_all_data" role may get ddl.
 RESET SESSION AUTHORIZATION;
 -- Administrators can change who can access this function
-GRANT EXECUTE ON FUNCTION pg_get_subscription_ddl TO sub_nonsup_user;
-SET SESSION AUTHORIZATION 'sub_nonsup_user';
+GRANT pg_create_subscription TO createsub_role;
+GRANT pg_read_all_data TO readalldata_role;
+SET SESSION AUTHORIZATION 'createsub_role';
 SELECT pg_get_subscription_ddl('TestSubddL2');
-                                                                                pg_get_subscription_ddl                                                                                 
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- CREATE SUBSCRIPTION "TestSubddL2" CONNECTION 'host=unknown user=dvd password=pass123' PUBLICATION "testpub2", "TestPub3" WITH (connect = false, slot_name = 'slot1', enabled = false);
+                                                                                                                                                                                                     pg_get_subscription_ddl                                                                                                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE SUBSCRIPTION "TestSubddL2" CONNECTION 'host=unknown user=dvd password=pass123' PUBLICATION "testpub2", "TestPub3" WITH (connect = false, slot_name = 'slot1', enabled = false, binary = false, streaming = parallel, synchronous_commit = off, two_phase = off, disable_on_error = off, password_required = on, run_as_owner = off, origin = any, failover = off, retain_dead_tuples = off, max_retention_duration = 0);
 (1 row)
 
 RESET SESSION AUTHORIZATION;
-REVOKE EXECUTE ON FUNCTION pg_get_subscription_ddl FROM sub_nonsup_user;
+SET SESSION AUTHORIZATION 'readalldata_role';
+SELECT pg_get_subscription_ddl('TestSubddL2');
+                                                                                                                                                                                                     pg_get_subscription_ddl                                                                                                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE SUBSCRIPTION "TestSubddL2" CONNECTION 'host=unknown user=dvd password=pass123' PUBLICATION "testpub2", "TestPub3" WITH (connect = false, slot_name = 'slot1', enabled = false, binary = false, streaming = parallel, synchronous_commit = off, two_phase = off, disable_on_error = off, password_required = on, run_as_owner = off, origin = any, failover = off, retain_dead_tuples = off, max_retention_duration = 0);
+(1 row)
+
+RESET SESSION AUTHORIZATION;
+REVOKE pg_create_subscription FROM createsub_role;
+REVOKE pg_read_all_data FROM readalldata_role;
 ALTER SUBSCRIPTION testsub1 SET (slot_name=NONE);
 DROP SUBSCRIPTION testsub1;
 ALTER SUBSCRIPTION "TestSubddL2" SET (slot_name=NONE);
 DROP SUBSCRIPTION "TestSubddL2";
 DROP SUBSCRIPTION testsub3;
-DROP ROLE sub_nonsup_user;
+DROP ROLE createsub_role;
+DROP ROLE readalldata_role;

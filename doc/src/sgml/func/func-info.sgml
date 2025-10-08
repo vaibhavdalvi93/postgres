@@ -3833,12 +3833,13 @@ acl      | {postgres=arwdDxtm/postgres,foo=r/postgres}
        <para>
         Reconstructs the creating command for a subscription.
         The result is a complete <command>CREATE SUBSCRIPTION</command>
-        statement.  This statement omits default values.  The
-        <literal>connect</literal> option set to <literal>false</literal>.
+        statement. The <literal>connect</literal> option set to
+        <literal>false</literal>.
        </para>
        <para>
-        This function is restricted to superusers by default, but other users
-        can be granted EXECUTE to run the function.
+        This function is restricted to users that have the
+        <literal>pg_read_all_data</literal> and/or
+        <literal>pg_create_subscription</literal> privilege.
        </para></entry>
       </row>
      </tbody>

@@ -2,7 +2,8 @@
 -- Get CREATE SUBSCRIPTION statement
 --
 
-CREATE ROLE sub_nonsup_user LOGIN;
+CREATE ROLE createsub_role LOGIN;
+CREATE ROLE readalldata_role LOGIN;
 
 -- Create subscription with minimal options
 CREATE SUBSCRIPTION testsub1 CONNECTION 'dbname=db_doesnotexist'
@@ -25,20 +26,30 @@ CREATE SUBSCRIPTION testsub3 CONNECTION 'host=unknown user=dvd password=pass12'
   retain_dead_tuples=true, max_retention_duration=100);
 SELECT pg_get_subscription_ddl('testsub3');
 
--- Non-superuser can't see subscription ddl
-SET SESSION AUTHORIZATION 'sub_nonsup_user';
+-- Non-superusers and which don't have pg_create_subscription and/or
+-- pg_read_all_data permission can't get ddl
+SET SESSION AUTHORIZATION 'createsub_role';
+SELECT pg_get_subscription_ddl('TestSubddL2');
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION 'createsub_role';
 SELECT pg_get_subscription_ddl('TestSubddL2');
 RESET SESSION AUTHORIZATION;
 -- Administrators can change who can access this function
-GRANT EXECUTE ON FUNCTION pg_get_subscription_ddl TO sub_nonsup_user;
-SET SESSION AUTHORIZATION 'sub_nonsup_user';
+GRANT pg_create_subscription TO createsub_role;
+GRANT pg_read_all_data TO readalldata_role;
+SET SESSION AUTHORIZATION 'createsub_role';
+SELECT pg_get_subscription_ddl('TestSubddL2');
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION 'readalldata_role';
 SELECT pg_get_subscription_ddl('TestSubddL2');
 
 RESET SESSION AUTHORIZATION;
-REVOKE EXECUTE ON FUNCTION pg_get_subscription_ddl FROM sub_nonsup_user;
+REVOKE pg_create_subscription FROM createsub_role;
+REVOKE pg_read_all_data FROM readalldata_role;
 ALTER SUBSCRIPTION testsub1 SET (slot_name=NONE);
 DROP SUBSCRIPTION testsub1;
 ALTER SUBSCRIPTION "TestSubddL2" SET (slot_name=NONE);
 DROP SUBSCRIPTION "TestSubddL2";
 DROP SUBSCRIPTION testsub3;
-DROP ROLE sub_nonsup_user;
+DROP ROLE createsub_role;
+DROP ROLE readalldata_role;
