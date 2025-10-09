@@ -23,7 +23,7 @@ CREATE SUBSCRIPTION testsub3 CONNECTION 'host=unknown user=dvd password=pass12'
   create_slot=false, copy_data=false, binary=true, streaming=off,
   synchronous_commit=local, two_phase=true, disable_on_error=true,
   password_required=false, run_as_owner=true, origin=none, failover=true,
-  retain_dead_tuples=true, max_retention_duration=100);
+  retain_dead_tuples=false, max_retention_duration=100);
 SELECT pg_get_subscription_ddl('testsub3');
 
 -- Non-superusers and which don't have pg_create_subscription and/or
@@ -31,7 +31,7 @@ SELECT pg_get_subscription_ddl('testsub3');
 SET SESSION AUTHORIZATION 'createsub_role';
 SELECT pg_get_subscription_ddl('TestSubddL2');
 RESET SESSION AUTHORIZATION;
-SET SESSION AUTHORIZATION 'createsub_role';
+SET SESSION AUTHORIZATION 'readalldata_role';
 SELECT pg_get_subscription_ddl('TestSubddL2');
 RESET SESSION AUTHORIZATION;
 -- Administrators can change who can access this function

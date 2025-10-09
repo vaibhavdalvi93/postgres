@@ -33,17 +33,14 @@ CREATE SUBSCRIPTION testsub3 CONNECTION 'host=unknown user=dvd password=pass12'
   create_slot=false, copy_data=false, binary=true, streaming=off,
   synchronous_commit=local, two_phase=true, disable_on_error=true,
   password_required=false, run_as_owner=true, origin=none, failover=true,
-  retain_dead_tuples=true, max_retention_duration=100);
-WARNING:  commit timestamp and origin data required for detecting conflicts won't be retained
-HINT:  Consider setting "track_commit_timestamp" to true.
-WARNING:  deleted rows to detect conflicts would not be removed until the subscription is enabled
-HINT:  Consider setting retain_dead_tuples to false.
+  retain_dead_tuples=false, max_retention_duration=100);
+NOTICE:  max_retention_duration is ineffective when retain_dead_tuples is disabled
 WARNING:  subscription was created, but is not connected
 HINT:  To initiate replication, you must manually create the replication slot, enable the subscription, and refresh the subscription.
 SELECT pg_get_subscription_ddl('testsub3');
-                                                                                                                                                                                                  pg_get_subscription_ddl                                                                                                                                                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- CREATE SUBSCRIPTION testsub3 CONNECTION 'host=unknown user=dvd password=pass12' PUBLICATION "testpub4" WITH (connect = false, slot_name = none, create_slot = false, enabled = false, binary = true, streaming = off, synchronous_commit = local, two_phase = on, disable_on_error = on, password_required = off, run_as_owner = on, origin = none, failover = on, retain_dead_tuples = on, max_retention_duration = 100);
+                                                                                                                                                                                                   pg_get_subscription_ddl                                                                                                                                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE SUBSCRIPTION testsub3 CONNECTION 'host=unknown user=dvd password=pass12' PUBLICATION "testpub4" WITH (connect = false, slot_name = none, create_slot = false, enabled = false, binary = true, streaming = off, synchronous_commit = local, two_phase = on, disable_on_error = on, password_required = off, run_as_owner = on, origin = none, failover = on, retain_dead_tuples = off, max_retention_duration = 100);
 (1 row)
 
 -- Non-superusers and which don't have pg_create_subscription and/or
@@ -53,7 +50,7 @@ SELECT pg_get_subscription_ddl('TestSubddL2');
 ERROR:  permission denied to get the create subscription ddl
 DETAIL:  Only roles with privileges of the "pg_create_subscription" and/or "pg_read_all_data" role may get ddl.
 RESET SESSION AUTHORIZATION;
-SET SESSION AUTHORIZATION 'createsub_role';
+SET SESSION AUTHORIZATION 'readalldata_role';
 SELECT pg_get_subscription_ddl('TestSubddL2');
 ERROR:  permission denied to get the create subscription ddl
 DETAIL:  Only roles with privileges of the "pg_create_subscription" and/or "pg_read_all_data" role may get ddl.
