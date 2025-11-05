@@ -35,6 +35,7 @@
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_statistic_ext.h"
+#include "catalog/pg_subscription.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -57,6 +58,7 @@
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "rewrite/rewriteSupport.h"
+#include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -13714,4 +13716,179 @@ get_range_partbound_string(List *bound_datums)
 	appendStringInfoChar(buf, ')');
 
 	return buf->data;
+}
+
+/*
+ * pg_get_subscription_ddl
+ *		Get CREATE SUBSCRIPTION statement for the given subscription
+ */
+Datum
+pg_get_subscription_ddl(PG_FUNCTION_ARGS)
+{
+	char	   *subname = text_to_cstring(PG_GETARG_TEXT_P(0));
+	StringInfo	pubnames;
+	StringInfoData buf;
+	HeapTuple	tup;
+	char	   *conninfo;
+	List	   *publist;
+	Datum		datum;
+	bool		isnull;
+
+	/*
+	 * To prevent unprivileged users from initiating unauthorized network
+	 * connections, dumping subscription creation is restricted.  A user must
+	 * be specifically authorized (via the appropriate role privilege) to
+	 * create subscriptions and/or to read all data.
+	 */
+	if (!(has_privs_of_role(GetUserId(), ROLE_PG_CREATE_SUBSCRIPTION) ||
+		has_privs_of_role(GetUserId(), ROLE_PG_READ_ALL_DATA)))
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied to get the create subscription ddl"),
+				 errdetail("Only roles with privileges of the \"%s\" and/or \"%s\" role may get ddl.",
+						   "pg_create_subscription", "pg_read_all_data")));
+
+	/* Look up the subscription in pg_subscription */
+	tup = SearchSysCache2(SUBSCRIPTIONNAME, ObjectIdGetDatum(MyDatabaseId),
+						  CStringGetDatum(subname));
+	if (!HeapTupleIsValid(tup))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("subscription \"%s\" does not exist", subname)));
+
+	initStringInfo(&buf);
+
+	/* Build the CREATE SUBSCRIPTION statement */
+	appendStringInfo(&buf, "CREATE SUBSCRIPTION %s ",
+					 quote_identifier(subname));
+
+	/* Get conninfo */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subconninfo);
+	conninfo = TextDatumGetCString(datum);
+
+	/* Append connection info to the CREATE SUBSCRIPTION statement */
+	appendStringInfo(&buf, "CONNECTION \'%s\'", conninfo);
+
+	/* Build list of quoted publications and append them to query */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subpublications);
+	publist = textarray_to_stringlist(DatumGetArrayTypeP(datum));
+	pubnames = makeStringInfo();
+	GetPublicationsStr(publist, pubnames, false);
+	appendStringInfo(&buf, " PUBLICATION %s", pubnames->data);
+
+	/*
+	 * Add options using WITH clause.  The 'connect' option value given at the
+	 * time of subscription creation is not available in the catalog.  When
+	 * creating a subscription, the remote host is not reachable or in an
+	 * unclear state, in that case, the subscription can be created using
+	 * 'connect = false' option.  This is what pg_dump uses.
+	 *
+	 * The status or value of the options 'create_slot' and 'copy_data' not
+	 * available in the catalog table.  We can use default values i.e. TRUE
+	 * for both.  This is what pg_dump uses.
+	 */
+	appendStringInfoString(&buf, " WITH (connect = false");
+
+	/* Get slotname */
+	datum = SysCacheGetAttr(SUBSCRIPTIONOID, tup,
+							Anum_pg_subscription_subslotname,
+							&isnull);
+	if (!isnull)
+		appendStringInfo(&buf, ", slot_name = \'%s\'",
+						 NameStr(*DatumGetName(datum)));
+	else
+	{
+		appendStringInfoString(&buf, ", slot_name = none");
+		/* Setting slot_name to none must set create_slot to false */
+		appendStringInfoString(&buf, ", create_slot = false");
+	}
+
+	/* Get enabled option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subenabled);
+	/* Setting 'slot_name' to none must set 'enabled' to false as well */
+	if (!DatumGetBool(datum) || isnull)
+		appendStringInfoString(&buf, ", enabled = false");
+	else
+		appendStringInfoString(&buf, ", enabled = true");
+
+	/* Get binary option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subbinary);
+	appendStringInfo(&buf, ", binary = %s",
+					 DatumGetBool(datum) ? "true" : "false");
+
+	/* Get streaming option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_substream);
+	if (DatumGetChar(datum) == LOGICALREP_STREAM_OFF)
+		appendStringInfoString(&buf, ", streaming = off");
+	else if (DatumGetChar(datum) == LOGICALREP_STREAM_ON)
+		appendStringInfoString(&buf, ", streaming = on");
+	else
+		appendStringInfoString(&buf, ", streaming = parallel");
+
+	/* Get sync commit option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subsynccommit);
+	appendStringInfo(&buf, ", synchronous_commit = %s",
+					 TextDatumGetCString(datum));
+
+	/* Get two-phase commit option */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subtwophasestate);
+	if (DatumGetChar(datum) == LOGICALREP_TWOPHASE_STATE_DISABLED)
+		appendStringInfoString(&buf, ", two_phase = off");
+	else
+		appendStringInfoString(&buf, ", two_phase = on");
+
+	/* Disable on error? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subdisableonerr);
+	appendStringInfo(&buf, ", disable_on_error = %s",
+					 DatumGetBool(datum) ? "on" : "off");
+
+	/* Password required? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subpasswordrequired);
+	appendStringInfo(&buf, ", password_required = %s",
+					 DatumGetBool(datum) ? "on" : "off");
+
+	/* Run as owner? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subrunasowner);
+	appendStringInfo(&buf, ", run_as_owner = %s",
+					 DatumGetBool(datum) ? "on" : "off");
+
+	/* Get origin */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_suborigin);
+	appendStringInfo(&buf, ", origin = %s", TextDatumGetCString(datum));
+
+	/* Failover? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subfailover);
+	appendStringInfo(&buf, ", failover = %s",
+					 DatumGetBool(datum) ? "on" : "off");
+
+	/* Retain dead tuples? */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_subretaindeadtuples);
+	appendStringInfo(&buf, ", retain_dead_tuples = %s",
+					 DatumGetBool(datum) ? "on" : "off");
+
+	/* Max retention duration */
+	datum = SysCacheGetAttrNotNull(SUBSCRIPTIONOID, tup,
+								   Anum_pg_subscription_submaxretention);
+	appendStringInfo(&buf, ", max_retention_duration = %lu",
+					 Int32GetDatum(datum));
+
+	/* Finally close parenthesis and add semicolon to the statement */
+	appendStringInfoString(&buf, ");");
+
+	ReleaseSysCache(tup);
+
+	PG_RETURN_TEXT_P(string_to_text(buf.data));
 }
